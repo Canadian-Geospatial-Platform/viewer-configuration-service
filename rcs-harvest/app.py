@@ -32,22 +32,22 @@ def lambda_handler(event, context):
     metadata_response = ""
     
     try:
-        id = str(event["queryStringParameters"]["id"])
+        id = str(event["id"])
     except:
         message += "id was not supplied or is invalid"
 
     try:
-        lang = str(event["queryStringParameters"]["lang"])
+        lang = str(event["lang"])
     except:
         message += ", lang was not supplied or is invalid"
     
     try:
-        key = str(event["queryStringParameters"]["key"])
+        key = str(event["key"])
     except:
         key = False
 
     try:
-        if (str(event["queryStringParameters"]["metadata"]).upper() == 'TRUE'):
+        if (str(event["metadata"]).upper() == 'TRUE'):
             metadata = True
         else:
             metadata = False
@@ -110,16 +110,20 @@ def get_generic(id, lang, required, path, key):
         else:
             message += '{"rcs": "Could not access RCS: ' + rcs_url_request + '"}'
     elif key == "gcs":
-        gcs_response = read_configuration_by_id(id, path, 'ca-central-1', dynamodb=None)
-        first_element = gcs_response[0]
-        json_string = first_element['plugins']
-        json_data = json.loads(json_string)
-        response = json_data[0]['RAMPS']
-    
-        if response != None:
-            message += '{"gcs": "Success returning GCS"}'
-        else:
-            message += '{"gcs": "Could not access GCS: ' + id + '}"'
+        try:
+            gcs_response = read_configuration_by_id(id, path, 'ca-central-1', dynamodb=None)
+            first_element = gcs_response[0]
+            json_string = first_element['plugins']
+            json_data = json.loads(json_string)
+            response = json_data[0]['RAMPS']
+        
+            if response != None:
+                message += '{"gcs": "Success returning GCS"}'
+            else:
+                message += '{"gcs": "Could not access GCS: ' + id + '}"'
+        except:
+            message = "{"
+            response = "{}"
     elif key == "metadata":
         if required == True:
             metadata_url_request = path + "?lang=" + lang + "&id=" + id
