@@ -106,7 +106,10 @@ def get_generic(id, lang, required, path, key):
     
         if rcs_response.ok:
             response = json.loads(rcs_response.text)
-            message += '{"rcs": "Success returning RCS"}'
+            if not response:
+                message = '{"rcs": "RCS not found"}'
+            else:
+                message += '{"rcs": "Success returning RCS"}'
         else:
             message += '{"rcs": "Could not access RCS: ' + rcs_url_request + '"}'
     elif key == "gcs":
@@ -115,24 +118,36 @@ def get_generic(id, lang, required, path, key):
             first_element = gcs_response[0]
             json_string = first_element['plugins']
             json_data = json.loads(json_string)
-            response = json_data[0]['RAMPS']
-        
+            try:
+                response = json_data[0]['RAMPS']
+            except:
+                try:
+                    response = json_data[0]
+                except:
+                    try:
+                        response = json_data
+                    except:
+                        response = ""
             if response != None:
                 message += '{"gcs": "Success returning GCS"}'
             else:
-                message += '{"gcs": "Could not access GCS: ' + id + '}"'
+                message += '{"gcs": "GCS not found"}'
         except:
-            message = "{"
+            message = '{"gcs": "Error returning GCS"}'
             response = "{}"
     elif key == "metadata":
         if required == True:
             metadata_url_request = path + "?lang=" + lang + "&id=" + id
             headers = {'Accept': 'application/json'}
             metadata_response = requests.get(metadata_url_request, headers=headers)
-            
+        
             if metadata_response.ok:
-                response = json.loads(metadata_response.text)['body']['Items']
-                message += '{"metadata": "Success returning metadata"}'
+                try:
+                    response = json.loads(metadata_response.text)['body']['Items']
+                    message += '{"metadata": "Success returning metadata"}'
+                except TypeError:
+                    response = ""
+                    message += '{"metadata": "metadata not found"}'
             else:
                 message += '{"metadata": "Could not access metadata: ' + metadata_url_request + '"}'
         else:
