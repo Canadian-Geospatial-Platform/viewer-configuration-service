@@ -62,7 +62,6 @@ def lambda_handler(event, context):
     keys = ["gcs", "rcs", "metadata"]
     message_obj = []
     response_obj = []
-    reponse = []
     message_list = {}
     configuration = [viewer_configuration_table, rcs_configuration_path, geocore_api_path]
     
@@ -92,13 +91,14 @@ def lambda_handler(event, context):
         "statusCode": "200",
         "id": id,
         "message": message_list,
-        "reponse": combined_dict
+        "response": combined_dict
     }
     return response
 
 
 def get_generic(id, lang, required, path, key):
     message = ""
+    response = ""
     if key == "rcs":
         rcs_url_request = path + "/" + lang + "/" + id
         headers = {'Accept': 'application/json'}
@@ -109,33 +109,41 @@ def get_generic(id, lang, required, path, key):
             if not response:
                 message = '{"rcs": "RCS not found"}'
             else:
-                message += '{"rcs": "Success returning RCS"}'
+                message = '{"rcs": "Success returning RCS"}'
         else:
             message += '{"rcs": "Could not access RCS: ' + rcs_url_request + '"}'
     elif key == "gcs":
+        gcs_list = []
         try:
             gcs_response = read_configuration_by_id(id, path, 'ca-central-1', dynamodb=None)
-            first_element = gcs_response[0]
-            json_string = first_element['plugins']
-            json_data = json.loads(json_string)
-            try:
-                response = json_data[0]['RAMPS']
-            except:
-                try:
-                    response = json_data[0]
-                except:
-                    try:
-                        response = json_data
-                    except:
-                        response = ""
-            if response != None:
-                message += '{"gcs": "Success returning GCS"}'
+            if gcs_response == []:
+                response = json.loads("[]")
+                message = '{"gcs": "GCS not found"}'
             else:
-                message += '{"gcs": "GCS not found"}'
+                try:
+                    json_data = json.loads(gcs_response[0]['plugins'])
+                    try:
+                        gcs_list.append(json_data[0]['RAMPS'])
+                    except KeyError:
+                        try:
+                            gcs_list.append(json_data[0])
+                        except KeyError:
+                            gcs_list.append(json_data)
+    
+                    if gcs_list != []:
+                        response = gcs_list
+                        message = '{"gcs": "Success returning GCS"}'
+                    else:
+                        response = json.loads("[]")
+                        message = '{"gcs": "GCS not found"}'
+                except KeyError:
+                    response = json.loads("[]")
+                    message = '{"gcs": "GCS does not have valid plugins"}'
         except:
+            response = json.loads("[]")
             message = '{"gcs": "Error returning GCS"}'
-            response = "{}"
     elif key == "metadata":
+        metadata_list = []
         if required == True:
             metadata_url_request = path + "?lang=" + lang + "&id=" + id
             headers = {'Accept': 'application/json'}
@@ -143,16 +151,19 @@ def get_generic(id, lang, required, path, key):
         
             if metadata_response.ok:
                 try:
-                    response = json.loads(metadata_response.text)['body']['Items']
-                    message += '{"metadata": "Success returning metadata"}'
-                except TypeError:
-                    response = ""
-                    message += '{"metadata": "metadata not found"}'
+                    temp = json.loads(metadata_response.text)['body']['Items']
+                    metadata_list.append(temp)
+                    response = metadata_list
+                    message = '{"metadata": "Success returning metadata"}'
+                except (KeyError, TypeError) as e:
+                    response = json.loads("[]")
+                    message = '{"metadata": "Metadata not found"}'
             else:
-                message += '{"metadata": "Could not access metadata: ' + metadata_url_request + '"}'
+                response = json.loads("[]")
+                message = '{"metadata": "Could not access metadata: ' + metadata_url_request + '"}'
         else:
-            response = ""
-            message += '{"metadata": "metadata not requested"}'
+            response = json.loads("[]")
+            message = '{"metadata": "Metadata not requested"}'
 
     return response, message
     
