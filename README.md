@@ -2,6 +2,17 @@
 
 The Viewer Configuration Service (VCS) is a part of the GEO.ca project that allows for viewer configuration management in GeoView.
 
+## Table of Contents
+- [Notional Architecture](#notional-architecture)
+- [Features](#features)
+- [API Endpoints](#api-endpoints)
+  - [GET Request](#get-request)
+    - [Example](#example)
+  - [POST Request](#post-request)
+    - [Expected Response for POST Request](#expected-response-for-post-request)
+    - [Example](#example-1)
+    - [Postman Example](#postman-example)
+
 ## Notional Architecture
 <img width="1179" alt="gcs" src="https://github.com/Canadian-Geospatial-Platform/geocore-gcs/assets/18405829/57996a2b-3f58-4fe6-aea2-0666a33cac91">
 
@@ -12,7 +23,7 @@ The Viewer Configuration Service (VCS) is a part of the GEO.ca project that allo
 
 https://geocore.api.geo.ca/vcs?
 
-### GET Request
+## GET Request
 Retrieve viewer configuration data:
 ```bash
 GET /vcs?id=XYZ&lang=XYZ&metadata=false
@@ -23,7 +34,7 @@ GET /vcs?id=XYZ&lang=XYZ&metadata=false
 curl -X GET "https://geocore.api.geo.ca/vcs?lang=en&id=21b821cf-0f1c-40ee-8925-eab12d357668&metadata=true"
 ```
 
-### POST Request
+## POST Request
 Submit a viewer configuration:
 ```bash
 POST /vcs
@@ -37,7 +48,7 @@ POST /vcs
 }
 ```
 
-## Expected Response for POST Request
+### Expected Response for POST Request
 When you submit a POST request to the `/vcs` endpoint, the server will respond with a JSON similar to below. A successful response will look like this:
 
 ```bash
