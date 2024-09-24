@@ -40,6 +40,7 @@ def handle_request(event, context):
 
 def handle_post_request(event, viewer_configuration_table):
     message = ""
+    
     try:
         # Check if the body is Base64 encoded
         if isinstance(event["body"], str):
@@ -53,11 +54,11 @@ def handle_post_request(event, viewer_configuration_table):
         else:
             raise ValueError("Invalid body format")
         
-        print("json_data: ", json_data)
+        #print("json_data: ", json_data)
         if isinstance(json_data, str):
             json_data = json.loads(json_data)  # Parsing if it's a string
         gcs_data = json_data["body"]["gcs"]  # Extracting 'gcs' from the body
-        print("gcs_data: ", gcs_data)
+        #print("gcs_data: ", gcs_data)
     except (KeyError, json.JSONDecodeError, ValueError):
         message += "json_data was not supplied or is invalid"
         return {
