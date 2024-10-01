@@ -43,7 +43,10 @@ POST /vcs
   "method": "POST",
   "body": {
     "id": "XYZ",
-    "gcs": [{}]
+    "gcs": [{
+       "en" : {},
+       "fr" : {}
+    }]
   }
 }
 ```
