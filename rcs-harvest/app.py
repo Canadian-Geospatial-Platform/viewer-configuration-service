@@ -144,6 +144,8 @@ def handle_get_request(event, rcs_configuration_path, viewer_configuration_table
 def get_generic(id_list, lang, required, path, key):
     message = ""
     response = {}
+    timeout_seconds = 5  # Set the timeout for the requests
+
     if key == "rcs":
         # Note: RCS already supports the ability to return multiple ids from a single request
         lang_list = ['en', 'fr']
@@ -151,13 +153,23 @@ def get_generic(id_list, lang, required, path, key):
             id = ",".join(id_list)
             rcs_url_request = f"{path}/{lang}/{id}"
             headers = {'Accept': 'application/json'}
-            rcs_response = requests.get(rcs_url_request, headers=headers)
+            try:
+                rcs_response = requests.get(rcs_url_request, headers=headers, timeout=timeout_seconds)
 
-            if rcs_response.ok:
-                response[lang] = json.loads(rcs_response.text)
-                message = '{"rcs": "Success returning RCS"}' if response else '{"rcs": "RCS not found"}'
-            else:
-                message += f'{{"rcs": "Could not access RCS: {rcs_url_request}"}}'
+                if rcs_response.ok:
+                    response[lang] = json.loads(rcs_response.text)
+                    message = '{"rcs": "Success returning RCS"}' if response else '{"rcs": "RCS not found"}'
+                else:
+                    message = f'{{"rcs": "Could not access RCS: {rcs_url_request}"}}'
+            except requests.Timeout:
+                response[lang] = json.loads("{}")
+                message = '{"rcs": "RCS timed out"}'
+            except requests.RequestException as e:
+                response[lang] = json.loads("{}")
+                message = '{"rcs": "RCS request exception"}'
+            except:
+                response[lang] = json.loads("{}")
+                message = '{"rcs": "RCS not found"}'
     elif key == "gcs":
         # Note: GCS is obtained from a dynamodb table
         gcs_list = []
