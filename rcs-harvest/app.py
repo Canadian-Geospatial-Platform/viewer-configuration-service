@@ -9,28 +9,83 @@ import datetime
 
 from lambda_multiprocessing import Pool
 from boto3.dynamodb.conditions import Key
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, NoCredentialsError
+
+from opensearchpy import OpenSearch, RequestsHttpConnection
+from requests_aws4auth import AWS4Auth
 
 RCS_CONFIG_PATH = os.environ['RCS_CONFIG_PATH']
 GCS_TABLE       = os.environ['GCS_TABLE']
 GEOCORE_ID_API  = os.environ['GEOCORE_ID_API']
+AOS_HOST = os.environ['OS_ENDPOINT']
+NEW_INDEX_NAME = os.environ['NEW_INDEX_NAME']
+REGION = 'ca-central-1'
 
 def lambda_handler(event, context):
     """
     AWS Lambda Entry
     """
-    return handle_request(event, context)
+    print(event)
+    print(context)
+    
+    # Use IAM credentials instead
+    credentials = boto3.Session().get_credentials()
+    aws_auth = AWS4Auth(credentials.access_key, credentials.secret_key, REGION, 'es', session_token=credentials.token)
 
-def handle_request(event, context):
-    rcs_configuration_path = RCS_CONFIG_PATH
-    viewer_configuration_table = GCS_TABLE
-    geocore_api_path = GEOCORE_ID_API
+    # Initialize OpenSearch client
+    os_client = OpenSearch(
+        hosts=[{'host': AOS_HOST, 'port': 443}],
+        http_auth=aws_auth,
+        use_ssl=True,
+        verify_certs=True,
+        ssl_assert_hostname = False,
+        ssl_show_warn = False,
+        connection_class=RequestsHttpConnection
+    )
+
+    # Delete index (e.g., if index format has changed)
+    #os_client.indices.delete(index=NEW_INDEX_NAME)
+
+    # Creates new OpenSearch index - ignored if index already exists
+    create_opensearch_index(os_client, NEW_INDEX_NAME)
+
+    metadata = event.get('metadata', '') or ''
+    lang = event.get('lang', '') or ''
+    id = event.get('id', '') or ''
+    ip_address = event.get('ip_address', '') or ''
+    timestamp = event.get('timestamp', '') or ''
+    user_agent = event.get('user_agent', '') or ''
+    http_method = event.get('http_method', '') or ''
+    referrer = event.get('referrer', '') or ''
 
     method = str(event["method"]).upper()
+
     if method == 'POST':
-        return handle_post_request(event, viewer_configuration_table)
+        return handle_post_request(event, GCS_TABLE)
     elif method == 'GET':
-        return handle_get_request(event, rcs_configuration_path, viewer_configuration_table, geocore_api_path)
+        get_return_json =  handle_get_request(event, RCS_CONFIG_PATH, GCS_TABLE, GEOCORE_ID_API)
+
+        #Use ip2geo_handler to do document formating
+        layer_name_en, layer_name_fr, layer_type, ip2geo_data = ip2geo_handler(os_client, get_return_json, ip_address)
+
+        document = [
+            {
+                "timestamp": timestamp,
+                "lang": lang,
+                "id": id,
+                "metadata": metadata,
+                "user_agent": user_agent,
+                "http_method": http_method,
+                "referrer": referrer,
+                "layer_name_en": layer_name_en,
+                "layer_name_fr": layer_name_fr,
+                "layer_type": layer_type,
+                "ip2geo": ip2geo_data
+            }
+        ]
+        save_to_opensearch(os_client, NEW_INDEX_NAME, document)
+
+        return get_return_json        
     else:
         return {
             "headers": {"Content-type": "application/json"},
@@ -38,7 +93,7 @@ def handle_request(event, context):
             "body": json.dumps({"message": "Method Not Allowed"})
         }
 
-def handle_post_request(event, viewer_configuration_table):
+def handle_post_request(event, GCS_TABLE):
     message = ""
     
     try:
@@ -72,7 +127,7 @@ def handle_post_request(event, viewer_configuration_table):
     if not id:
         message += "no id was supplied or is invalid"
     else:
-        create_configuration_by_id(id, viewer_configuration_table, gcs_data, 'ca-central-1', dynamodb=None)
+        create_configuration_by_id(id, GCS_TABLE, gcs_data, 'ca-central-1', dynamodb=None)
         message += f"Inserted supplied data for id: {id}"
 
     return {
@@ -84,7 +139,7 @@ def handle_post_request(event, viewer_configuration_table):
         }
     }
 
-def handle_get_request(event, rcs_configuration_path, viewer_configuration_table, geocore_api_path):
+def handle_get_request(event, RCS_CONFIG_PATH, GCS_TABLE, GEOCORE_ID_API):
     message = ""
     try:
         id = str(event["id"])
@@ -114,11 +169,11 @@ def handle_get_request(event, rcs_configuration_path, viewer_configuration_table
     message_obj = []
     response_obj = []
     message_list = {}
-    configuration = [viewer_configuration_table, rcs_configuration_path, geocore_api_path]
+    configuration = [GCS_TABLE, RCS_CONFIG_PATH, GEOCORE_ID_API]
     
-    iterable_pool_data = [(id_list, lang, True, viewer_configuration_table, 'gcs'), 
-                          (id_list, lang, True, rcs_configuration_path, 'rcs'),
-                          (id_list, lang, metadata, geocore_api_path, 'metadata')]
+    iterable_pool_data = [(id_list, lang, True, GCS_TABLE, 'gcs'), 
+                          (id_list, lang, True, RCS_CONFIG_PATH, 'rcs'),
+                          (id_list, lang, metadata, GEOCORE_ID_API, 'metadata')]
     
     with Pool() as p:
         response = p.starmap(get_generic, iterable_pool_data)
@@ -219,11 +274,11 @@ def get_generic(id_list, lang, required, path, key):
 
     return response, message
 
-def read_configuration_by_id(uuid, viewer_configuration_table, region, dynamodb=None):
+def read_configuration_by_id(uuid, GCS_TABLE, REGION, dynamodb=None):
     if not dynamodb:
-        dynamodb = boto3.resource('dynamodb', region_name=region)
+        dynamodb = boto3.resource('dynamodb', region_name=REGION)
 
-    table = dynamodb.Table(viewer_configuration_table)
+    table = dynamodb.Table(GCS_TABLE)
     try:
         response = table.query(KeyConditionExpression=Key('uuid').eq(uuid))
     except ClientError as e:
@@ -231,15 +286,15 @@ def read_configuration_by_id(uuid, viewer_configuration_table, region, dynamodb=
     else:
         return response
 
-def create_configuration_by_id(uuid, viewer_configuration_table, json_data, region, dynamodb=None):
+def create_configuration_by_id(uuid, GCS_TABLE, json_data, REGION, dynamodb=None):
     if not dynamodb:
-        dynamodb = boto3.resource('dynamodb', region_name=region)
+        dynamodb = boto3.resource('dynamodb', region_name=REGION)
         
     dateTime = datetime.datetime.utcnow().isoformat()[:-7] + 'Z'
     
     json_string = json.dumps(json_data)
     
-    table = dynamodb.Table(viewer_configuration_table)
+    table = dynamodb.Table(GCS_TABLE)
     
     response = table.put_item(
        Item={
@@ -270,3 +325,103 @@ def is_base64_encoded(data):
 def nonesafe_loads(obj):
     if obj is not None:
         return json.loads(obj)
+
+def parse_geo_point(ip2geo_data):
+    if 'location' in ip2geo_data and isinstance(ip2geo_data['location'], str):
+        try:
+            lat, lon = map(float, ip2geo_data['location'].split(','))
+            ip2geo_data['location'] = {"lat": lat, "lon": lon}  # Convert to geo_point format
+        except ValueError:
+            print("Invalid location format:", ip2geo_data['location'])
+            ip2geo_data['location'] = None  # Handle errors gracefully
+    return ip2geo_data
+
+def ip2geo_handler(os_client, get_return_json, ip_address):
+    try:
+        layer_name_en = get_return_json['response']['rcs']['en'][0]['layers'][0]['name']
+    except:
+        layer_name_en = ''
+    
+    try:
+        layer_name_fr = get_return_json['response']['rcs']['fr'][0]['layers'][0]['name']
+    except:
+        layer_name_fr = ''
+
+    try:
+        layer_type = get_return_json['response']['rcs']['en'][0]['layers'][0]['layerType']
+    except:
+        layer_type = ''
+    
+    ip2geo_payload = {
+        "docs": [
+            {
+                "_index": "test",
+                "_id": "1",
+                "_source": {
+                    "ip": ip_address
+                }
+            }
+        ]
+    }
+
+    response = os_client.transport.perform_request(
+        method="POST",
+        url="/_ingest/pipeline/ip-to-geo-pipeline/_simulate",
+        body=json.dumps(ip2geo_payload)
+    )
+
+    try:
+        ip2geo_data = response["docs"][0]["doc"]["_source"].get("ip2geo", {})
+        ip2geo_data = parse_geo_point(ip2geo_data) #ensure lat lon is a geo_point
+    except (KeyError, json.JSONDecodeError) as e:
+        print("Error extracting ip2geo data:", str(e))
+    
+    return layer_name_en, layer_name_fr, layer_type, ip2geo_data
+
+def create_opensearch_index(os_client, index_name):
+    """Create a new OpenSearch index if it doesn't exist."""
+    if not os_client.indices.exists(index=index_name):
+        # Define the mapping for the new index
+        index_body = {
+            "mappings": {
+                "properties": {
+                    "timestamp": {"type": "date"},
+                    "lang": {"type": "keyword"},
+                    "id": {"type": "keyword"},
+                    "metadata": {"type": "keyword"},
+                    "ip_address": {"type": "ip"},
+                    "user_agent": {"type": "keyword"},
+                    "http_method": {"type": "keyword"},
+                    "layer_name_en": {"type": "keyword"},
+                    "layer_name_fr": {"type": "keyword"},
+                    "layer_type": {"type": "keyword"},
+                    "referrer": {"type": "keyword"},
+                    "ip2geo": {
+                        "properties": {
+                            "continent_name": {"type": "keyword"},
+                            "region_iso_code": {"type": "keyword"},
+                            "city_name": {"type": "keyword"},
+                            "country_iso_code": {"type": "keyword"},
+                            "country_name": {"type": "keyword"},
+                            "region_name": {"type": "keyword"},
+                            "location": {"type": "geo_point"},
+                            "time_zone": {"type": "keyword"}
+                        }
+                    }
+                }
+            }
+        }
+
+        response = os_client.indices.create(index=index_name, body=index_body)
+        print(f"Created new OpenSearch index: {index_name}")
+        return response
+    else:
+        print(f"Index '{index_name}' already exists.")
+        return None
+
+def save_to_opensearch(os_client, index, document):
+    """
+    Loads the transformed log data into OpenSearch.
+    """
+    for doc in document:
+        response = os_client.index(index=index, body=doc)
